@@ -14,7 +14,7 @@
         position: relative;
         top: $banner-height / 3.5;
     }
-
+ 
     $filter-height: 65px;
 
     &-filters {
@@ -150,5 +150,9 @@
         &::before {
             content: '$';
         }
+    }
+
+    &-alert {
+        margin-top: 10px;
     }
 }

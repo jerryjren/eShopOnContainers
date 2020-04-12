@@ -3,36 +3,40 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.eShopOnContainers.Services.Catalog.API.Infrastructure;
 using System.IO;
+using System.Net;
 using System.Threading.Tasks;
 
 // For more information on enabling MVC for empty projects, visit http://go.microsoft.com/fwlink/?LinkID=397860
 
 namespace Microsoft.eShopOnContainers.Services.Catalog.API.Controllers
 {
-    [Route("api/v1/[controller]")]
-    public class PicController : Controller
+    [ApiController]
+    public class PicController : ControllerBase
     {
-        private readonly IHostingEnvironment _env;
+        private readonly IWebHostEnvironment _env;
         private readonly CatalogContext _catalogContext;
 
-        public PicController(IHostingEnvironment env,
+        public PicController(IWebHostEnvironment env,
             CatalogContext catalogContext)
         {
             _env = env;
             _catalogContext = catalogContext;
         }
 
-        [HttpGet("{id}")]
+        [HttpGet]
+        [Route("api/v1/catalog/items/{catalogItemId:int}/pic")]
+        [ProducesResponseType((int)HttpStatusCode.NotFound)]
+        [ProducesResponseType((int)HttpStatusCode.BadRequest)]
         // GET: /<controller>/
-        public async Task<IActionResult> GetImage(int id)
+        public async Task<ActionResult> GetImageAsync(int catalogItemId)
         {
-            if (id <= 0)
+            if (catalogItemId <= 0)
             {
                 return BadRequest();
             }
 
             var item = await _catalogContext.CatalogItems
-                .SingleOrDefaultAsync(ci => ci.Id == id);
+                .SingleOrDefaultAsync(ci => ci.Id == catalogItemId);
 
             if (item != null)
             {

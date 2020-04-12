@@ -1,15 +1,15 @@
 ﻿namespace Microsoft.eShopOnContainers.Services.Catalog.API.Infrastructure
 {
-    using EntityFrameworkCore;
     using Extensions.Logging;
     using global::Catalog.API.Extensions;
-    using Microsoft.AspNetCore.Builder;
     using Microsoft.AspNetCore.Hosting;
-    using Microsoft.Extensions.DependencyInjection;
     using Microsoft.Extensions.Options;
     using Model;
+    using Polly;
+    using Polly.Retry;
     using System;
     using System.Collections.Generic;
+    using System.Data.SqlClient;
     using System.Globalization;
     using System.IO;
     using System.IO.Compression;
@@ -19,56 +19,48 @@
 
     public class CatalogContextSeed
     {
-        public static async Task SeedAsync(IApplicationBuilder applicationBuilder, IHostingEnvironment env, ILoggerFactory loggerFactory, int? retry = 0)
+        public async Task SeedAsync(CatalogContext context,IWebHostEnvironment env,IOptions<CatalogSettings> settings,ILogger<CatalogContextSeed> logger)
         {
-            var log = loggerFactory.CreateLogger("catalog seed");
+            var policy = CreatePolicy(logger, nameof(CatalogContextSeed));
 
-            var context = (CatalogContext)applicationBuilder
-                .ApplicationServices.GetService(typeof(CatalogContext));
-
-            context.Database.Migrate();
-
-            var settings = (CatalogSettings)applicationBuilder
-                .ApplicationServices.GetRequiredService<IOptions<CatalogSettings>>().Value;
-
-            var useCustomizationData = settings.UseCustomizationData;
-            var contentRootPath = env.ContentRootPath;
-            var picturePath = env.WebRootPath;
-
-            if (!context.CatalogBrands.Any())
+            await policy.ExecuteAsync(async () =>
             {
-                context.CatalogBrands.AddRange(useCustomizationData
-                    ? GetCatalogBrandsFromFile(contentRootPath, log)
-                    : GetPreconfiguredCatalogBrands()
-                    );
+                var useCustomizationData = settings.Value.UseCustomizationData;
+                var contentRootPath = env.ContentRootPath;
+                var picturePath = env.WebRootPath;
 
-                await context.SaveChangesAsync();
-            }
+                if (!context.CatalogBrands.Any())
+                {
+                    await context.CatalogBrands.AddRangeAsync(useCustomizationData
+                        ? GetCatalogBrandsFromFile(contentRootPath, logger)
+                        : GetPreconfiguredCatalogBrands());
 
-            if (!context.CatalogTypes.Any())
-            {
-                context.CatalogTypes.AddRange(useCustomizationData
-                    ? GetCatalogTypesFromFile(contentRootPath, log)
-                    : GetPreconfiguredCatalogTypes()
-                    );
+                    await context.SaveChangesAsync();
+                }
 
-                await context.SaveChangesAsync();
-            }
+                if (!context.CatalogTypes.Any())
+                {
+                    await context.CatalogTypes.AddRangeAsync(useCustomizationData
+                        ? GetCatalogTypesFromFile(contentRootPath, logger)
+                        : GetPreconfiguredCatalogTypes());
 
-            if (!context.CatalogItems.Any())
-            {
-                context.CatalogItems.AddRange(useCustomizationData
-                    ? GetCatalogItemsFromFile(contentRootPath, context, log)
-                    : GetPreconfiguredItems()
-                    );
+                    await context.SaveChangesAsync();
+                }
 
-                await context.SaveChangesAsync();
+                if (!context.CatalogItems.Any())
+                {
+                    await context.CatalogItems.AddRangeAsync(useCustomizationData
+                        ? GetCatalogItemsFromFile(contentRootPath, context, logger)
+                        : GetPreconfiguredItems());
 
-                GetCatalogItemPictures(contentRootPath, picturePath);
-            }
+                    await context.SaveChangesAsync();
+
+                    GetCatalogItemPictures(contentRootPath, picturePath);
+                }
+            });
         }
 
-        static IEnumerable<CatalogBrand> GetCatalogBrandsFromFile(string contentRootPath, ILogger log)
+        private IEnumerable<CatalogBrand> GetCatalogBrandsFromFile(string contentRootPath, ILogger<CatalogContextSeed> logger)
         {
             string csvFileCatalogBrands = Path.Combine(contentRootPath, "Setup", "CatalogBrands.csv");
 
@@ -85,18 +77,18 @@
             }
             catch (Exception ex)
             {
-                log.LogError(ex.Message);
+                logger.LogError(ex, "EXCEPTION ERROR: {Message}", ex.Message);
                 return GetPreconfiguredCatalogBrands();
             }
 
             return File.ReadAllLines(csvFileCatalogBrands)
                                         .Skip(1) // skip header row
                                         .SelectTry(x => CreateCatalogBrand(x))
-                                        .OnCaughtException(ex => { log.LogError(ex.Message); return null; })
+                                        .OnCaughtException(ex => { logger.LogError(ex, "EXCEPTION ERROR: {Message}", ex.Message); return null; })
                                         .Where(x => x != null);
         }
 
-        static CatalogBrand CreateCatalogBrand(string brand)
+        private CatalogBrand CreateCatalogBrand(string brand)
         {
             brand = brand.Trim('"').Trim();
 
@@ -111,7 +103,7 @@
             };
         }
 
-        static IEnumerable<CatalogBrand> GetPreconfiguredCatalogBrands()
+        private IEnumerable<CatalogBrand> GetPreconfiguredCatalogBrands()
         {
             return new List<CatalogBrand>()
             {
@@ -123,7 +115,7 @@
             };
         }
 
-        static IEnumerable<CatalogType> GetCatalogTypesFromFile(string contentRootPath, ILogger log)
+        private IEnumerable<CatalogType> GetCatalogTypesFromFile(string contentRootPath, ILogger<CatalogContextSeed> logger)
         {
             string csvFileCatalogTypes = Path.Combine(contentRootPath, "Setup", "CatalogTypes.csv");
 
@@ -140,18 +132,18 @@
             }
             catch (Exception ex)
             {
-                log.LogError(ex.Message);
+                logger.LogError(ex, "EXCEPTION ERROR: {Message}", ex.Message);
                 return GetPreconfiguredCatalogTypes();
             }
 
             return File.ReadAllLines(csvFileCatalogTypes)
                                         .Skip(1) // skip header row
                                         .SelectTry(x => CreateCatalogType(x))
-                                        .OnCaughtException(ex => { log.LogError(ex.Message); return null; })
+                                        .OnCaughtException(ex => { logger.LogError(ex, "EXCEPTION ERROR: {Message}", ex.Message); return null; })
                                         .Where(x => x != null);
         }
 
-        static CatalogType CreateCatalogType(string type)
+        private CatalogType CreateCatalogType(string type)
         {
             type = type.Trim('"').Trim();
 
@@ -166,7 +158,7 @@
             };
         }
 
-        static IEnumerable<CatalogType> GetPreconfiguredCatalogTypes()
+        private IEnumerable<CatalogType> GetPreconfiguredCatalogTypes()
         {
             return new List<CatalogType>()
             {
@@ -177,7 +169,7 @@
             };
         }
 
-        static IEnumerable<CatalogItem> GetCatalogItemsFromFile(string contentRootPath, CatalogContext context, ILogger log)
+        private IEnumerable<CatalogItem> GetCatalogItemsFromFile(string contentRootPath, CatalogContext context, ILogger<CatalogContextSeed> logger)
         {
             string csvFileCatalogItems = Path.Combine(contentRootPath, "Setup", "CatalogItems.csv");
 
@@ -195,7 +187,7 @@
             }
             catch (Exception ex)
             {
-                log.LogError(ex.Message);
+                logger.LogError(ex, "EXCEPTION ERROR: {Message}", ex.Message);
                 return GetPreconfiguredItems();
             }
 
@@ -206,11 +198,11 @@
                         .Skip(1) // skip header row
                         .Select(row => Regex.Split(row, ",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)") )
                         .SelectTry(column => CreateCatalogItem(column, csvheaders, catalogTypeIdLookup, catalogBrandIdLookup))
-                        .OnCaughtException(ex => { log.LogError(ex.Message); return null; })
+                        .OnCaughtException(ex => { logger.LogError(ex, "EXCEPTION ERROR: {Message}", ex.Message); return null; })
                         .Where(x => x != null);
         }
 
-        static CatalogItem CreateCatalogItem(string[] column, string[] headers, Dictionary<String, int> catalogTypeIdLookup, Dictionary<String, int> catalogBrandIdLookup)
+        private CatalogItem CreateCatalogItem(string[] column, string[] headers, Dictionary<String, int> catalogTypeIdLookup, Dictionary<String, int> catalogBrandIdLookup)
         {
             if (column.Count() != headers.Count())
             {
@@ -316,7 +308,7 @@
             return catalogItem;
         }
 
-        static IEnumerable<CatalogItem> GetPreconfiguredItems()
+        private IEnumerable<CatalogItem> GetPreconfiguredItems()
         {
             return new List<CatalogItem>()
             {
@@ -335,7 +327,7 @@
             };
         }
 
-        static string[] GetHeaders(string csvfile, string[] requiredHeaders, string[] optionalHeaders = null)
+        private string[] GetHeaders(string csvfile, string[] requiredHeaders, string[] optionalHeaders = null)
         {
             string[] csvheaders = File.ReadLines(csvfile).First().ToLowerInvariant().Split(',');
 
@@ -363,18 +355,32 @@
             return csvheaders;
         }
 
-        static void GetCatalogItemPictures(string contentRootPath, string picturePath)
+        private void GetCatalogItemPictures(string contentRootPath, string picturePath)
         {
-            DirectoryInfo directory = new DirectoryInfo(picturePath);
-            foreach (FileInfo file in directory.GetFiles())
+            if (picturePath != null)
             {
-                file.Delete();
-            }
+                DirectoryInfo directory = new DirectoryInfo(picturePath);
+                foreach (FileInfo file in directory.GetFiles())
+                {
+                    file.Delete();
+                }
 
-            string zipFileCatalogItemPictures = Path.Combine(contentRootPath, "Setup", "CatalogItems.zip");
-            ZipFile.ExtractToDirectory(zipFileCatalogItemPictures, picturePath);
+                string zipFileCatalogItemPictures = Path.Combine(contentRootPath, "Setup", "CatalogItems.zip");
+                ZipFile.ExtractToDirectory(zipFileCatalogItemPictures, picturePath);
+            }
+        }
+
+        private AsyncRetryPolicy CreatePolicy( ILogger<CatalogContextSeed> logger, string prefix,int retries = 3)
+        {
+            return Policy.Handle<SqlException>().
+                WaitAndRetryAsync(
+                    retryCount: retries,
+                    sleepDurationProvider: retry => TimeSpan.FromSeconds(5),
+                    onRetry: (exception, timeSpan, retry, ctx) =>
+                    {
+                        logger.LogWarning(exception, "[{prefix}] Exception {ExceptionType} with message {Message} detected on attempt {retry} of {retries}", prefix, exception.GetType().Name, exception.Message, retry, retries);
+                    }
+                );
         }
     }
-
-
 }

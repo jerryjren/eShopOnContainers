@@ -1,16 +1,14 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.eShopOnContainers.WebMVC.Services;
 using Microsoft.eShopOnContainers.WebMVC.ViewModels;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Authentication;
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace Microsoft.eShopOnContainers.WebMVC.Controllers
 {
-    [Authorize]
+    [Authorize(AuthenticationSchemes = "OpenIdConnect")]
     public class CartController : Controller
     {
         private readonly IBasketService _basketSvc;
@@ -26,47 +24,65 @@ namespace Microsoft.eShopOnContainers.WebMVC.Controllers
 
         public async Task<IActionResult> Index()
         {
-            var user = _appUserParser.Parse(HttpContext.User);
-            var vm = await _basketSvc.GetBasket(user);
-            
+            try
+            {
+                var user = _appUserParser.Parse(HttpContext.User);
+                var vm = await _basketSvc.GetBasket(user);
 
-            return View(vm);
+                return View(vm);
+            }
+            catch (Exception ex)
+            {
+                HandleException(ex);
+            }
+
+            return View();
         }
 
-        
+
         [HttpPost]
         public async Task<IActionResult> Index(Dictionary<string, int> quantities, string action)
         {
-            var user = _appUserParser.Parse(HttpContext.User);
-            var basket = await _basketSvc.SetQuantities(user, quantities);
-            var vm = await _basketSvc.UpdateBasket(basket);
-
-            if (action == "[ Checkout ]")
+            try
             {
-                var order = _basketSvc.MapBasketToOrder(basket);
-                return RedirectToAction("Create", "Order");
+                var user = _appUserParser.Parse(HttpContext.User);
+                var basket = await _basketSvc.SetQuantities(user, quantities);
+                if (action == "[ Checkout ]")
+                {
+                    return RedirectToAction("Create", "Order");
+                }
             }
-           
-            return View(vm);
+            catch (Exception ex)
+            {
+                HandleException(ex);
+            }
+
+            return View();
         }
 
         public async Task<IActionResult> AddToCart(CatalogItem productDetails)
         {
-            if (productDetails.Id != null)
+            try
             {
-                var user = _appUserParser.Parse(HttpContext.User);
-                var product = new BasketItem()
+                if (productDetails?.Id != null)
                 {
-                    Id = Guid.NewGuid().ToString(),
-                    Quantity = 1,
-                    ProductName = productDetails.Name,
-                    PictureUrl = productDetails.PictureUri,
-                    UnitPrice = productDetails.Price,
-                    ProductId = productDetails.Id
-                };
-                await _basketSvc.AddItemToBasket(user, product);
+                    var user = _appUserParser.Parse(HttpContext.User);
+                    await _basketSvc.AddItemToBasket(user, productDetails.Id);
+                }
+                return RedirectToAction("Index", "Catalog");
             }
-            return RedirectToAction("Index", "Catalog");
+            catch (Exception ex)
+            {
+                // Catch error when Basket.api is in circuit-opened mode                 
+                HandleException(ex);
+            }
+
+            return RedirectToAction("Index", "Catalog", new { errorMsg = ViewBag.BasketInoperativeMsg });
+        }
+
+        private void HandleException(Exception ex)
+        {
+            ViewBag.BasketInoperativeMsg = $"Basket Service is inoperative {ex.GetType().Name} - {ex.Message}";
         }
     }
 }

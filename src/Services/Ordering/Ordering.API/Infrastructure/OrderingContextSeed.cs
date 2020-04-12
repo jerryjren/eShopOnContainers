@@ -1,63 +1,64 @@
 ﻿namespace Microsoft.eShopOnContainers.Services.Ordering.API.Infrastructure
 {
-    using AspNetCore.Builder;
+    using global::Ordering.API.Extensions;
+    using Microsoft.AspNetCore.Hosting;
     using Microsoft.EntityFrameworkCore;
-    using Microsoft.eShopOnContainers.Services.Ordering.Domain;
-    using Ordering.Infrastructure;
-    using System.Linq;
-    using System.Threading.Tasks;
     using Microsoft.eShopOnContainers.Services.Ordering.Domain.AggregatesModel.BuyerAggregate;
     using Microsoft.eShopOnContainers.Services.Ordering.Domain.AggregatesModel.OrderAggregate;
-    using System.Collections.Generic;
-    using Microsoft.AspNetCore.Hosting;
-    using System.IO;
-    using Microsoft.Extensions.Options;
-    using Microsoft.Extensions.DependencyInjection;
+    using Microsoft.eShopOnContainers.Services.Ordering.Domain.SeedWork;
     using Microsoft.Extensions.Logging;
+    using Microsoft.Extensions.Options;
+    using Ordering.Infrastructure;
+    using Polly;
+    using Polly.Retry;
     using System;
-    using global::Ordering.API.Extensions;
+    using System.Collections.Generic;
+    using System.Data.SqlClient;
+    using System.IO;
+    using System.Linq;
+    using System.Threading.Tasks;
 
     public class OrderingContextSeed
     {
-        public static async Task SeedAsync(IApplicationBuilder applicationBuilder, IHostingEnvironment env, ILoggerFactory loggerFactory)
+        public  async Task SeedAsync(OrderingContext context, IWebHostEnvironment env,IOptions<OrderingSettings> settings, ILogger<OrderingContextSeed> logger)
         {
-            var log = loggerFactory.CreateLogger("ordering seed");
+            var policy = CreatePolicy(logger, nameof(OrderingContextSeed));
 
-            var context = (OrderingContext)applicationBuilder
-                .ApplicationServices.GetService(typeof(OrderingContext));
-
-            var settings = applicationBuilder
-                .ApplicationServices.GetRequiredService<IOptions<OrderingSettings>>().Value;
-
-            var useCustomizationData = settings.UseCustomizationData;
-            var contentRootPath = env.ContentRootPath;
-
-
-            using (context)
+            await policy.ExecuteAsync(async () =>
             {
-                context.Database.Migrate();
 
-                if (!context.CardTypes.Any())
+                var useCustomizationData = settings.Value
+                .UseCustomizationData;
+
+                var contentRootPath = env.ContentRootPath;
+
+
+                using (context)
                 {
-                    context.CardTypes.AddRange(useCustomizationData
-                                            ? GetCardTypesFromFile(contentRootPath, log)
-                                            : GetPredefinedCardTypes());
+                    context.Database.Migrate();
+
+                    if (!context.CardTypes.Any())
+                    {
+                        context.CardTypes.AddRange(useCustomizationData
+                                                ? GetCardTypesFromFile(contentRootPath, logger)
+                                                : GetPredefinedCardTypes());
+
+                        await context.SaveChangesAsync();
+                    }
+
+                    if (!context.OrderStatus.Any())
+                    {
+                        context.OrderStatus.AddRange(useCustomizationData
+                                                ? GetOrderStatusFromFile(contentRootPath, logger)
+                                                : GetPredefinedOrderStatus());
+                    }
 
                     await context.SaveChangesAsync();
                 }
-
-                if (!context.OrderStatus.Any())
-                {
-                    context.OrderStatus.AddRange(useCustomizationData
-                                            ? GetOrderStatusFromFile(contentRootPath, log)
-                                            : GetPredefinedOrderStatus());
-                }
-
-                await context.SaveChangesAsync();
-            }
+            });
         }
 
-        static IEnumerable<CardType> GetCardTypesFromFile(string contentRootPath, ILogger log)
+        private IEnumerable<CardType> GetCardTypesFromFile(string contentRootPath, ILogger<OrderingContextSeed> log)
         {
             string csvFileCardTypes = Path.Combine(contentRootPath, "Setup", "CardTypes.csv");
 
@@ -74,7 +75,7 @@
             }
             catch (Exception ex)
             {
-                log.LogError(ex.Message);
+                log.LogError(ex, "EXCEPTION ERROR: {Message}", ex.Message);
                 return GetPredefinedCardTypes();
             }
 
@@ -82,11 +83,11 @@
             return File.ReadAllLines(csvFileCardTypes)
                                         .Skip(1) // skip header column
                                         .SelectTry(x => CreateCardType(x, ref id))
-                                        .OnCaughtException(ex => { log.LogError(ex.Message); return null; })
+                                        .OnCaughtException(ex => { log.LogError(ex, "EXCEPTION ERROR: {Message}", ex.Message); return null; })
                                         .Where(x => x != null);
         }
 
-        static CardType CreateCardType(string value, ref int id)
+        private CardType CreateCardType(string value, ref int id)
         {
             if (String.IsNullOrEmpty(value))
             {
@@ -96,18 +97,12 @@
             return new CardType(id++, value.Trim('"').Trim());
         }
 
-
-        private static IEnumerable<CardType> GetPredefinedCardTypes()
+        private IEnumerable<CardType> GetPredefinedCardTypes()
         {
-            return new List<CardType>()
-            {
-                CardType.Amex,
-                CardType.Visa,
-                CardType.MasterCard
-            };
+            return Enumeration.GetAll<CardType>();
         }
 
-        static IEnumerable<OrderStatus> GetOrderStatusFromFile(string contentRootPath, ILogger log)
+        private IEnumerable<OrderStatus> GetOrderStatusFromFile(string contentRootPath, ILogger<OrderingContextSeed> log)
         {
             string csvFileOrderStatus = Path.Combine(contentRootPath, "Setup", "OrderStatus.csv");
 
@@ -124,7 +119,7 @@
             }
             catch (Exception ex)
             {
-                log.LogError(ex.Message);
+                log.LogError(ex, "EXCEPTION ERROR: {Message}", ex.Message);
                 return GetPredefinedOrderStatus();
             }
 
@@ -132,11 +127,11 @@
             return File.ReadAllLines(csvFileOrderStatus)
                                         .Skip(1) // skip header row
                                         .SelectTry(x => CreateOrderStatus(x, ref id))
-                                        .OnCaughtException(ex => { log.LogError(ex.Message); return null; })
+                                        .OnCaughtException(ex => { log.LogError(ex, "EXCEPTION ERROR: {Message}", ex.Message); return null; })
                                         .Where(x => x != null);
         }
 
-        static OrderStatus CreateOrderStatus(string value, ref int id)
+        private OrderStatus CreateOrderStatus(string value, ref int id)
         {
             if (String.IsNullOrEmpty(value))
             {
@@ -146,7 +141,7 @@
             return new OrderStatus(id++, value.Trim('"').Trim().ToLowerInvariant());
         }
 
-        static IEnumerable<OrderStatus> GetPredefinedOrderStatus()
+        private IEnumerable<OrderStatus> GetPredefinedOrderStatus()
         {
             return new List<OrderStatus>()
             {
@@ -159,7 +154,7 @@
             };
         }
 
-        static string[] GetHeaders(string[] requiredHeaders, string csvfile)
+        private string[] GetHeaders(string[] requiredHeaders, string csvfile)
         {
             string[] csvheaders = File.ReadLines(csvfile).First().ToLowerInvariant().Split(',');
 
@@ -177,6 +172,20 @@
             }
 
             return csvheaders;
+        }
+
+     
+        private AsyncRetryPolicy CreatePolicy( ILogger<OrderingContextSeed> logger, string prefix, int retries =3)
+        {
+            return Policy.Handle<SqlException>().
+                WaitAndRetryAsync(
+                    retryCount: retries,
+                    sleepDurationProvider: retry => TimeSpan.FromSeconds(5),
+                    onRetry: (exception, timeSpan, retry, ctx) =>
+                    {
+                        logger.LogWarning(exception, "[{prefix}] Exception {ExceptionType} with message {Message} detected on attempt {retry} of {retries}", prefix, exception.GetType().Name, exception.Message, retry, retries);
+                    }
+                );
         }
     }
 }

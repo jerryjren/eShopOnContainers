@@ -62,4 +62,17 @@
         text-align: center;
         text-transform: uppercase;
     }
+
+    &-alert {
+        margin-top: 10px;
+    }
+}
+
+.esh-campaigns-card {
+
+    &-footer-text {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
 }

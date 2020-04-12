@@ -17,11 +17,18 @@ namespace Microsoft.eShopOnContainers.WebMVC.ViewComponents
 
         public async Task<IViewComponentResult> InvokeAsync(ApplicationUser user)
         {
-            var itemsInCart = await ItemsInCartAsync(user);
-            var vm = new CartComponentViewModel()
+            var vm = new CartComponentViewModel();
+            try
             {
-                ItemsCount = itemsInCart
-            };
+                var itemsInCart = await ItemsInCartAsync(user);
+                vm.ItemsCount = itemsInCart;
+                return View(vm);
+            }
+            catch 
+            {
+                ViewBag.IsBasketInoperative = true;
+            }
+
             return View(vm);
         }
         private async Task<int> ItemsInCartAsync(ApplicationUser user)
